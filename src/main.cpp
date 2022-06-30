@@ -1,16 +1,51 @@
 #include <Arduino.h>
+// OneWire and DS2438 Library include:
 #include <OneWire.h>
 #include <DS2438.h>
 
 // For a connection via I2C using the Arduino Wire include:
-#include "WiFi.h"
+#include <WiFiMulti.h>
 #include <Wire.h>               // Only needed for Arduino 1.6.5 and earlier
 #include "SSD1306Wire.h"        // legacy: #include "SSD1306.h"
 
-
 #include "images.h"
 #include <Bounce2.h>
-// define the Arduino digital I/O pin to be used for the 1-Wire network here
+
+// For InfluxDB Data Update 
+WiFiMulti wifiMulti;
+#define DEVICE "ESP32"
+#include <InfluxDbClient.h>
+#include <InfluxDbCloud.h>
+
+//---------------------------------------DEFINE DATABASES----------------------------------------------
+// WiFi AP SSID
+#define WIFI_SSID "BikiniBottom"
+// WiFi password
+#define WIFI_PASSWORD "603kbdbzm"
+// InfluxDB v2 server url, e.g. https://eu-central-1-1.aws.cloud2.influxdata.com (Use: InfluxDB UI -> Load Data -> Client Libraries)
+#define INFLUXDB_URL "http://47.100.85.203:8086"
+// InfluxDB v2 server or cloud API token (Use: InfluxDB UI -> Data -> API Tokens -> <select token>)
+#define INFLUXDB_TOKEN "HYv9nF0E2nv0TiHBW7waikkUlP6wl2S5KyYG7Mirx1vmF_TBGmONTD4rMwTE8QCJP-Ao2cQ_movgDuiyuxIS8g=="
+// InfluxDB v2 organization id (Use: InfluxDB UI -> User -> About -> Common Ids )
+#define INFLUXDB_ORG "MAR"
+// InfluxDB v2 bucket name (Use: InfluxDB UI ->  Data -> Buckets)
+#define INFLUXDB_BUCKET "IOT/autogen"
+
+// Set timezone string according to https://www.gnu.org/software/libc/manual/html_node/TZ-Variable.html
+// Examples:
+//  Pacific Time: "PST8PDT"
+//  Eastern: "EST5EDT"
+//  Japanesse: "JST-9"
+//  Central Europe: "CET-1CEST,M3.5.0,M10.5.0/3"
+#define TZ_INFO "CET-1CEST,M3.5.0,M10.5.0/3"
+
+// InfluxDB client instance with preconfigured InfluxCloud certificate
+InfluxDBClient client(INFLUXDB_URL, INFLUXDB_ORG, INFLUXDB_BUCKET, INFLUXDB_TOKEN, InfluxDbCloud2CACert);
+
+// Data point
+Point sensor("wifi_status");
+
+//------------- define the Arduino digital I/O pin to be used for the 1-Wire network here -----------
 const uint8_t ONE_WIRE_PIN = 18;
 
 // define the 1-Wire address of the DS2438 battery monitor here (lsb first)
@@ -33,7 +68,7 @@ int counter = 1;
 int led_status = 0;
 int LED = 2;
 int card = 0;
-
+uint32_t updateflag = 0;
 int CHARGE = 0;
 float Temp,Volt,Curr=0;
 char Ts[20],Vs[20],Cs[20];
@@ -79,7 +114,7 @@ void setup() {
   //LED
   pinMode(LED,OUTPUT);
   button.attach(BUTTON_PIN, INPUT);
-  button.interval(20);//间隔是5ms
+  button.interval(20);//weibanzi5ms
   //Charge Control
   pinMode(19,OUTPUT);
   
@@ -99,6 +134,38 @@ void setup() {
 
   //DS2438
   ds2438.begin();
+
+  // WiFi and Database Initialize Setting
+  // Setup wifi
+  WiFi.mode(WIFI_STA);
+  wifiMulti.addAP(WIFI_SSID, WIFI_PASSWORD);
+
+  Serial.print("Connecting to wifi");
+  while (wifiMulti.run() != WL_CONNECTED) {
+    Serial.print(".");
+    delay(100);
+  }
+  Serial.println();
+
+  // Add tags
+  sensor.addTag("device", DEVICE);
+  sensor.addTag("SSID", WiFi.SSID());
+
+  // Accurate time is necessary for certificate validation and writing in batches
+  // For the fastest time sync find NTP servers in your area: https://www.pool.ntp.org/zone/
+  // Syncing progress and the time will be printed to Serial.
+  timeSync(TZ_INFO, "pool.ntp.org", "time.nis.gov");
+
+  // Check server connection
+  if (client.validateConnection()) {
+    Serial.print("Connected to InfluxDB: ");
+    Serial.println(client.getServerUrl());
+  } else {
+    Serial.print("InfluxDB connection failed: ");
+    Serial.println(client.getLastErrorMessage());
+  }
+
+
 }
 
 
@@ -131,26 +198,15 @@ void loop() {
   case 0:
     led_status = ~led_status;
     digitalWrite(LED,led_status);
-    // Serial.println("Case 0");
-    /* code */
+
     break;
   case 1:
-    // Serial.println("Case 1");
-    // clear the display
-    display.clear();
-    // draw the current demo method
-    drawOS();
 
+    display.clear();
+    drawOS();
     display.setFont(ArialMT_Plain_10);
-    // display.setTextAlignment(TEXT_ALIGN_RIGHT);
-    // display.drawString(128, 54, String(millis()));
-    // write the buffer to the display
     display.display();
 
-  //   if (millis() - timeSinceLastModeSwitch > DEMO_DURATION) {
-  //     demoMode = (demoMode + 1)  % demoLength;
-  //     timeSinceLastModeSwitch = millis();
-  // }
   counter++;
   break;
 
@@ -159,26 +215,60 @@ void loop() {
     if (ds2438.isError()) {
         Serial.println("Error reading from DS2438 device");
     } else {
-        Serial.print("Temperature = ");
-        Serial.print(ds2438.getTemperature(), 1);
+        // Serial.print("Temperature = ");
+        // Serial.print(ds2438.getTemperature(), 1);
         Temp = ds2438.getTemperature();
-        Serial.print("°C, Voltage= ");
-        Serial.print(ds2438.getVoltage(DS2438_CHA), 1);
+        // Serial.print("°C, Voltage= ");
+        // Serial.print(ds2438.getVoltage(DS2438_CHA), 1);
         Volt = ds2438.getVoltage(DS2438_CHA);
-        Serial.print("V, Current = ");
-        Serial.print(ds2438.getCurrent(),1);
+        // Serial.print("V, Current = ");
+        // Serial.print(ds2438.getCurrent(),1);
         Curr = ds2438.getCurrent();
-        Serial.println("mA");
+        // Serial.println("mA");
     }
     // Serial.println("Case 3");
   break;
 
   case 4:
     // Serial.println("Case 4");
+      // Clear fields for reusing the point. Tags will remain untouched
+      if(updateflag == 1000)
+      {
+        updateflag == 0;
+        sensor.clearFields();
+        // Store measured value into point
+        // Report RSSI of currently connected network
+        sensor.addField("rssi", WiFi.RSSI());
+
+        sensor.addField("Temprature",Temp);
+        sensor.addField("Voltage",Volt);
+        sensor.addField("Current",Curr);
+        // Print what are we exactly writing
+        Serial.print("Writing: ");
+        Serial.println(sensor.toLineProtocol());
+
+        // Check WiFi connection and reconnect if needed
+        if (wifiMulti.run() != WL_CONNECTED) {
+          Serial.println("Wifi connection lost");
+        }
+
+        // Write point
+        if (!client.writePoint(sensor)) {
+          Serial.print("InfluxDB write failed: ");
+          Serial.println(client.getLastErrorMessage());
+        }
+
+        Serial.println("Wait 10s");
+
+      }
+      else{
+        updateflag++;
+      }
+    
   break;
   default:
     break;
   }
   
-  // delay(100);
+  delay(100);
 }

@@ -1,3 +1,5 @@
+//OLED TEST
+
 const uint8_t activeSymbol[] PROGMEM = {
     B00000000,
     B00000000,

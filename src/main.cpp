@@ -19,7 +19,6 @@ WiFiMulti wifiMulti;
 
 #include "password.h"
 
-
 // Set timezone string according to https://www.gnu.org/software/libc/manual/html_node/TZ-Variable.html
 // Examples:
 //  Pacific Time: "PST8PDT"
@@ -63,9 +62,9 @@ float Temp,Volt,Curr=0;
 char Ts[20],Vs[20],Cs[20];
 Bounce2::Button button = Bounce2::Button();//实例化一个抖动对象
 
-/**********************************
- *********** Function**************
-***********************************
+/**************************************
+ ************* Function****************
+***************************************
 */
 void buttonInterrupt(){
   CHARGE = ~CHARGE;
@@ -89,7 +88,6 @@ void drawOS(){
     display.drawString(64,15,"NOT Charging");
   }
   
-
 }
 
 
